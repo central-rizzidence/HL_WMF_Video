@@ -1,4 +1,4 @@
-package;
+package wmf;
 
 typedef HLExtension = hl.Abstract<"hlmfvideo">;
 typedef MPlayer = hl.Abstract<"MediaEnginePlayer*">;
@@ -50,7 +50,7 @@ class VideoTexture extends h3d.mat.Texture
 		var engine = h3d.Engine.getCurrent();
 		var dxd:h3d.impl.DirectXDriver = cast engine.driver;
 		var drv:dx.Driver.DriverInstance = @:privateAccess dxd.driver;
-		super(width,height,[Target,IsShared]);
+		super(width,height,[Target]);
 		mPlayer = _create(drv);
 	}
 
@@ -250,4 +250,103 @@ class VideoTexture extends h3d.mat.Texture
 	@:hlNative("hlmfvideo","hlmf_canPlayType")			static function _canPlayType(mplayer:MPlayer,type:hl.Bytes):Bool { return false; }
 
 	/////////////////////////////////////////////////////////////////////////////////////
+
+	override function alloc() {
+		if (t == null)
+			allocShared(this);
+	}
+
+	@:access(h3d.impl.MemoryManager)
+	static function allocShared(t:h3d.mat.Texture) {
+		while( true ) {
+			var free = true;
+			if ( hxd.Timer.frameCount > t.mem.lastAutoDispose + t.mem.autoDisposeCooldown ) {
+				free = t.mem.cleanTextures(false);
+				t.mem.lastAutoDispose = hxd.Timer.frameCount;
+			}
+			t.t = t.isDepth() ? allocSharedDepthBuffer(t) : allocSharedTexture(t);
+			if( t.t != null ) break;
+
+			if( t.mem.driver.isDisposed() ) return;
+			while( t.mem.cleanTextures(false) ) {} // clean all old textures
+			if( !free && !t.mem.cleanTextures(true) )
+				throw "Maximum texture memory reached";
+		}
+		t.mem.textures.push(t);
+		t.mem.texMemory += t.mem.memSize(t);
+	}
+
+	static function allocSharedDepthBuffer(b:h3d.mat.Texture):h3d.impl.Driver.Texture {
+		var depthDesc = new dx.Driver.Texture2dDesc();
+		depthDesc.width = b.width;
+		depthDesc.height = b.height;
+		depthDesc.mipLevels = 1;
+		depthDesc.arraySize = 1;
+		depthDesc.format = R24G8_TYPELESS;
+		depthDesc.sampleCount = 1;
+		depthDesc.sampleQuality = 0;
+		depthDesc.usage = Default;
+		depthDesc.bind = DepthStencil | ShaderResource;
+		depthDesc.misc |= dx.Driver.ResourceMisc.Shared;
+		var depth = dx.Driver.createTexture2d(depthDesc);
+		if( depth == null )
+			return null;
+		var vdesc = new dx.Driver.ShaderResourceViewDesc();
+		vdesc.format = R24_UNORM_X8_TYPELESS;
+		vdesc.dimension = Texture2D;
+		vdesc.arraySize = 1;
+		vdesc.start = 0;
+		vdesc.count = -1;
+		var srv = dx.Driver.createShaderResourceView(depth,vdesc);
+		var depthView = dx.Driver.createDepthStencilView(depth,D24_UNORM_S8_UINT, false);
+		var readOnlyDepthView = dx.Driver.createDepthStencilView(depth, D24_UNORM_S8_UINT, true);
+		return { res : depth, view : srv, depthView : depthView, readOnlyDepthView : readOnlyDepthView, rt : null, mips : 0 };
+	}
+
+	static function allocSharedTexture(t:h3d.mat.Texture):h3d.impl.Driver.Texture {
+		final driver:h3d.impl.DirectXDriver = cast @:privateAccess t.mem.driver;
+
+		var mips = 1;
+		if( t.flags.has(MipMapped) )
+			mips = t.mipLevels;
+
+		var rt = t.flags.has(Target);
+		var isCube = t.flags.has(Cube);
+		var isArray = t.flags.has(IsArray);
+
+		var desc = new dx.Driver.Texture2dDesc();
+		desc.width = t.width;
+		desc.height = t.height;
+		desc.format = @:privateAccess driver.getTextureFormat(t);
+
+		if( t.format.match(S3TC(_)) && (t.width & 3 != 0 || t.height & 3 != 0) )
+			throw t+" is compressed "+t.width+"x"+t.height+" but should be a 4x4 multiple";
+
+		desc.usage = Default;
+		desc.bind = ShaderResource;
+		desc.mipLevels = mips;
+		if( rt )
+			desc.bind |= dx.Driver.ResourceBind.RenderTarget;
+		if( isCube ) {
+			desc.arraySize = 6;
+			desc.misc |= dx.Driver.ResourceMisc.TextureCube;
+		}
+		if( isArray )
+			desc.arraySize = t.layerCount;
+		if( t.flags.has(MipMapped) && !t.flags.has(ManualMipMapGen) ) {
+			if( t.format.match(S3TC(_)) )
+				throw "Cannot generate mipmaps for compressed texture "+t;
+			desc.bind |= dx.Driver.ResourceBind.RenderTarget;
+			desc.misc |= dx.Driver.ResourceMisc.GenerateMips;
+		}
+		desc.misc |= dx.Driver.ResourceMisc.Shared;
+		var tex = dx.Driver.createTexture2d(desc);
+		if( tex == null )
+			return null;
+
+		t.lastFrame = @:privateAccess driver.frame;
+		t.flags.unset(WasCleared);
+
+		return { res : tex, view : @:privateAccess driver.makeTexView(t, tex, 0), rt : rt ? [] : null, mips : mips };
+	}
 }

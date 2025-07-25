@@ -8,18 +8,18 @@ import h2d.filter.Blur;
 import h3d.Engine;
 
 
-class Main extends hxd.App
+class WMFVideoTest extends hxd.App
 {
 	/////////////////////////////////////////////////////////////////////////////////////
 
 	static function main()
 	{
-		new Main();
+		new WMFVideoTest();
 	}
 
 	/////////////////////////////////////////////////////////////////////////////////////
 
-	var v:VideoBitmap;
+	var v:wmf.VideoBitmap;
 
 	override function init()
 	{
@@ -38,7 +38,7 @@ class Main extends hxd.App
 		tf.x = 100;
 		tf.y = 60;
 
-		v = new VideoBitmap();
+		v = new wmf.VideoBitmap();
 		s2d.addChild(v);
 		v.playVideo("SampleVideo.mp4");
 		v.x = 100;

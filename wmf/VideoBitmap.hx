@@ -1,4 +1,4 @@
-package;
+package wmf;
 
 import h2d.RenderContext;
 
